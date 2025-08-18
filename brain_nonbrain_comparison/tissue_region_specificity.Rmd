@@ -1,0 +1,254 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/yzjiang/Desktop/brain_pgene")
+getwd()
+```
+
+# Data Pre-processing
+```{r}
+library(dplyr)
+pgene_parent <- read.table('parent/pgene_dist_HiC_filtered.txt', sep = '\t', header = T)
+metadata_brainspan <- read.csv('metadata/BrainSpan/meta_RNAseq_bam_BrainSpan.csv')
+# filter genes and samples (only adults are kept in the BrainSpan)
+dup_pro_pgene <- unlist(lapply(pgene_parent$Pgene, function(x) strsplit(x, '\\.')[[1]][1]))
+unitary_pgene <- read.table('parent/fasta/unitary_pgene.bed', sep = '\t', header = F) %>% dplyr::select(V28) %>% pull()
+unitary_pgene <- unlist(lapply(unitary_pgene, function(x) strsplit(x, '\\.')[[1]][1]))
+pgene_filtered_by_parent <- c(dup_pro_pgene, unitary_pgene)
+pc_filtered_by_parent <- unique(unlist(lapply(pgene_parent$ParentGene, function(x) strsplit(x, '\\.')[[1]][1])))
+sample_filtered <- metadata_brainspan %>% filter(days > 6841) %>% pull(specimenID)
+## protein-coding (fpkm)
+pc_fpkm_brainspan <- read.table('brain_vs._non-brain/data/pc_expression_BrainSpan.tsv', sep = '\t', header = T, row.names = 1)
+pc_fpkm_brainspan <- pc_fpkm_brainspan[, colnames(pc_fpkm_brainspan) %in% sample_filtered]
+pc_fpkm_entex <- read.table('brain_vs._non-brain/data/pc_expression_ENTEx.tsv', sep = '\t', header = T, row.names = 1)
+pc_fpkm_combined <- cbind(pc_fpkm_brainspan, pc_fpkm_entex)
+pc_index_by_fpkm <- apply(pc_fpkm_combined, 1, function(x) sum(x >= 2) / ncol(pc_fpkm_combined)) >= 1/3
+pc_combined_transcribed <- rownames(pc_fpkm_combined[pc_index_by_fpkm,])
+## pgene (fpkm)
+pgene_fpkm_brainspan <- read.table('brain_vs._non-brain/data/pgene_expression_BrainSpan.tsv', sep = '\t', header = T, row.names = 1) 
+pgene_fpkm_brainspan <- pgene_fpkm_brainspan[,colnames(pgene_fpkm_brainspan) %in% sample_filtered]
+pgene_fpkm_entex <- read.table('brain_vs._non-brain/data/pgene_expression_ENTEx.tsv', sep = '\t', header = T, row.names = 1)
+pgene_fpkm_combined <- cbind(pgene_fpkm_brainspan, pgene_fpkm_entex)
+pgene_index_by_fpkm <- apply(pgene_fpkm_combined, 1, function(x) sum(x >= 0.5) / ncol(pgene_fpkm_combined)) >= 1/3
+pgene_combined_transcribed <- rownames(pgene_fpkm_combined[pgene_index_by_fpkm,])
+## protein-coding (count)
+pc_count_entex <- read.csv('brain_vs._non-brain/data/pc_count_ENTEx.tsv', sep = '\t', header = T, row.names = 1)
+pc_count_brainspan <- read.csv('brain_vs._non-brain/data/pc_count_BrainSpan.tsv', sep = '\t', header = T, row.names = 1)
+pc_count_brainspan <- pc_count_brainspan[,colnames(pc_count_brainspan) %in% sample_filtered]
+## pseudogene (count)
+pgene_count_entex <- read.csv('brain_vs._non-brain/data/pgene_count_ENTEx.tsv', sep = '\t', header = T, row.names = 1)
+pgene_count_brainspan <- read.csv('brain_vs._non-brain/data/pgene_count_BrainSpan.tsv', sep = '\t', header = T, row.names = 1)
+pgene_count_brainspan <- pgene_count_brainspan[,colnames(pgene_count_brainspan) %in% sample_filtered]
+```
+
+# Tissue-specificity
+
+## DESeq2
+
+```{r}
+tissueSpecDESeq2 <- function(countMat_1, countMat_2, gene_filter = NULL, group = c('Brain', 'Non_brain')){
+  if(!is.null(gene_filter)){
+    countMat_1 <- countMat_1[rownames(countMat_1) %in% gene_filter,]
+    countMat_2 <- countMat_2[rownames(countMat_2) %in% gene_filter,]
+  }
+  print(nrow(countMat_1))
+  countMat <- cbind(countMat_1,countMat_2)
+  condition <- factor(c(rep(group[1], ncol(countMat_1)), rep(group[2], ncol(countMat_2))))
+  colData <- data.frame(row.names = colnames(countMat), condition)
+  dds <- DESeqDataSetFromMatrix(countMat, colData, design = ~condition)
+  
+  dds <- DESeq(dds, minReplicatesForReplace = Inf)
+  res <- results(dds, contrast = c("condition", "Brain","Non_brain"), tidy = TRUE) %>% na.omit()
+  return(res)
+}
+```
+
+### Results
+
+```{r}
+pc_tissue_res <- tissueSpecDESeq2(pc_count_brainspan, pc_count_entex)
+pgene_tissue_res <- tissueSpecDESeq2(pgene_count_brainspan, pgene_count_entex, pgene_filtered_by_parent)
+pgene_tissue_res_nofilter <- tissueSpecDESeq2(pgene_count_brainspan, pgene_count_entex)
+parent_tissue_res <- tissueSpecDESeq2(pc_count_brainspan, pc_count_entex, pc_filtered_by_parent)
+
+write.table(pc_tissue_res, 'brain_vs._non-brain/tissue_specificity/pc_DEG_results.txt', row.names = F, quote = F, sep = '\t')
+write.table(pgene_tissue_res, 'brain_vs._non-brain/tissue_specificity/pgene_DEG_results.txt', row.names = F, quote = F, sep = '\t')
+write.table(pgene_tissue_res_nofilter, 'brain_vs._non-brain/tissue_specificity/pgene_DEG_results_nofilter.txt', row.names = F, quote = F, sep = '\t')
+write.table(parent_tissue_res, 'brain_vs._non-brain/tissue_specificity/parent_DEG_results.txt', row.names = F, quote = F, sep = '\t')
+```
+
+### Visualization
+
+```{r}
+plot_tissue_DESeqRes <- function(res, bg, title, group = c('Elevated in brain', 'Elevated in non-brain', 'Low tissue-specificity'), log2FC_thres = 1, pval_thres = 0.05){
+  res <- res[res$row %in% bg,]
+  df1 <- res[(res$log2FoldChange > log2FC_thres & res$padj < pval_thres),]
+  df2 <- res[(res$log2FoldChange < - log2FC_thres & res$padj < pval_thres),]
+  df3 <- setdiff(bg, union(df1$row, df2$row))
+  
+  saveRDS(list('elev_in_brain' = df1$row, 'elev_in_nonbrain' = df2$row, 'low_spec' = df3),
+          paste0('brain_vs._non-brain/tissue_specificity/DEG_', title, '.rds') )
+  
+  data <- data.frame(group = group, value=c(nrow(df1), nrow(df2), length(df3)))
+  data2 <- data %>% 
+    mutate(csum = rev(cumsum(rev(value))), 
+           pos = value/2 + lead(csum, 1),
+           pos = if_else(is.na(pos), value/2, pos))
+  
+  p <- ggplot(data, aes(x = "", y = value, fill = fct_inorder(group))) +
+    geom_col(width = 1, color = 1, position = 'stack') + scale_fill_brewer(palette = "Pastel2") +
+    geom_text(aes(x = 1.1,label = value), position = position_stack(vjust = 0.5)) +
+    coord_polar(theta = "y") +
+    guides(fill = guide_legend(title = "")) +
+    scale_y_continuous(breaks = data2$pos, labels = data$group) +
+    theme_void(base_size = 10) + ggtitle(title)
+  return(p)
+}
+
+p1 <- plot_tissue_DESeqRes(pgene_tissue_res, intersect(pgene_filtered_by_parent, pgene_combined_transcribed), 'Pseudogene')
+p2 <- plot_tissue_DESeqRes(pgene_tissue_res_nofilter, pgene_combined_transcribed, 'Pseudogene_nofilter')
+p3 <- plot_tissue_DESeqRes(parent_tissue_res, intersect(pc_filtered_by_parent, pc_combined_transcribed), 'Parent_gene')
+p4 <- plot_tissue_DESeqRes(pc_tissue_res, pc_combined_transcribed, 'Protein-coding_gene')
+
+p5 <- p1 / p2 / p3 / p4 + plot_layout(guides = "collect") & theme(legend.position = 'right')
+ggsave('brain_vs._non-brain/tissue_specificity/tissue_specificity_DEG_pie.pdf', p5, height = 10, width = 5)
+```
+
+## GINI
+```{r}
+tissueSpecGini <- function(Mat_1, Mat_2, gene_filter = NULL){
+  if(!is.null(gene_filter)){
+    Mat_1 <- Mat_1[rownames(Mat_1) %in% gene_filter,]
+    Mat_2 <- Mat_2[rownames(Mat_2) %in% gene_filter,]
+  }
+  Mat <- cbind(Mat_1,Mat_2)
+  res <- apply(Mat, 1, ineq)
+  return(res)
+}
+```
+
+### Results
+```{r}
+pgene_gini <- tissueSpecGini(pgene_fpkm_brainspan, pgene_fpkm_entex, 
+                             intersect(pgene_filtered_by_parent, pgene_combined_transcribed))
+pc_gini <- tissueSpecGini(pc_fpkm_brainspan, pc_fpkm_entex, pc_combined_transcribed)
+parent_gini <- tissueSpecGini(pc_fpkm_brainspan, pc_fpkm_entex, 
+                              intersect(pc_filtered_by_parent, pc_combined_transcribed))
+```
+
+### Visualization
+```{r}
+data <- data.frame(gini = c(pgene_gini, parent_gini, pc_gini), 
+                   group = c(rep('Pseudogene', length(pgene_gini)), 
+                             rep('Parent gene', length(parent_gini)), rep('Protein-coding gene', length(pc_gini))))
+p <- ggplot(data, aes(x = gini, fill = group, color = group)) + geom_density(alpha = 0.8) + 
+  scale_fill_brewer(palette = 'Blues') +
+  scale_color_brewer(palette = 'Blues') + 
+  labs(x = 'Gini Coefficient', y = 'Density', title = 'Expression Inequality') +
+  xlim(c(0,1)) + theme_bw(base_size = 14) + theme(legend.title = element_blank())
+ggsave('brain_vs._non-brain/tissue_specificity/tissue_expression_inequality.pdf', p, height = 5, width = 6)
+```
+
+# Region-specificity
+## DESeq2
+```{r}
+regionSpecDESeq2 <- function(countMat, metadata, gene_filter = NULL){
+  if(!is.null(gene_filter)){
+    countMat <- countMat[rownames(countMat) %in% gene_filter,]
+  }
+  condition <- as.factor(unlist(lapply(colnames(countMat), function(x) strsplit(x, '_')[[1]][2])))
+  combination <- combn(levels(condition), 2, simplify = FALSE)
+  colData <- data.frame(row.names = colnames(countMat), condition)
+  dds <- DESeqDataSetFromMatrix(countMat, colData, design = ~condition)
+  dds <- DESeq(dds, minReplicatesForReplace = Inf)
+  regionDEG <- c()
+  lowSpec <- c()
+  for (i in 1:length(combination)) {
+    res <- results(dds, contrast = c("condition", combination[[i]][1], combination[[i]][2]), tidy = TRUE)
+    regionDEG <-  c(regionDEG, res %>% na.omit() %>% dplyr::filter(abs(log2FoldChange) > 1, padj < 0.05) %>% pull(row))
+    lowSpec <- c(lowSpec, res %>% na.omit() %>% dplyr::filter(abs(log2FoldChange) <= 1 | padj >= 0.05) %>% pull(row))
+  }
+  regionDEG <- regionDEG[!duplicated(regionDEG)]
+  lowSpec <- lowSpec[!duplicated(lowSpec)]
+  lowSpec_filtered <- setdiff(lowSpec, regionDEG )
+  return(list(regionDEG = regionDEG, lowSpec = lowSpec_filtered))
+}
+```
+
+### Results
+```{r}
+pgene_region_res <- regionSpecDESeq2(pgene_count_brainspan, metadata_brainspan, pgene_filtered_by_parent)
+pgene_region_res_nofilter <- regionSpecDESeq2(pgene_count_brainspan, metadata_brainspan)
+parent_region_res <- regionSpecDESeq2(pc_count_brainspan, metadata_brainspan, pc_filtered_by_parent)
+pc_region_res <- regionSpecDESeq2(pc_count_brainspan, metadata_brainspan)
+
+saveRDS(pc_region_res, 'brain_vs._non-brain/region_specificity/pc_DEG_results.rds')
+saveRDS(pgene_region_res, 'brain_vs._non-brain/region_specificity/pgene_DEG_results.rds')
+saveRDS(pgene_region_res_nofilter, 'brain_vs._non-brain/region_specificity/pgene_DEG_results_nofilter.rds')
+saveRDS(parent_region_res, 'brain_vs._non-brain/region_specificity/parent_DEG_results.rds')
+```
+
+### Visualization
+```{r}
+plot_region_DESeqRes <- function(obj, bg, fpkmMat, thres, title){
+  temp <- fpkmMat[rownames(fpkmMat) %in% bg, ]
+  index <- apply(temp, 1, function(x) sum(x >= thres) / ncol(temp) >= 0.8)
+  detected <- temp[index,] %>% rownames()
+  notDetected <- setdiff(bg, detected)
+  regionDEG <- intersect(obj$regionDEG, detected)
+  lowSpec <- intersect(obj$lowSpec, detected)
+  
+  saveRDS(list('regionDEG' = regionDEG, 'lowSpec' = lowSpec, 'notDetected' = notDetected),
+          paste0('brain_vs._non-brain/region_specificity/DEG_', title, '.rds') )
+
+  data <- data.frame(value = c(length(regionDEG), length(lowSpec), length(notDetected)), group = c('Elevated in at least one region', 'Low region-specificity', 'Not detected'))
+
+  data2 <- data %>% 
+  mutate(csum = rev(cumsum(rev(value))), 
+         pos = value/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), value/2, pos))
+  
+  p <- ggplot(data, aes(x = "", y = value, fill = fct_inorder(group))) +
+    geom_col(width = 1, color = 1, position = 'stack') + scale_fill_brewer(palette = "Set3") +
+    geom_text(aes(x = 1.1,label = value), position = position_stack(vjust = 0.5)) +
+    coord_polar(theta = "y") +
+    guides(fill = guide_legend(title = "")) +
+    scale_y_continuous(breaks = data2$pos, labels = data$group) +
+    theme_void(base_size = 10) + ggtitle(title)
+  return(p)
+}
+
+setwd('/Users/yzjiang/Desktop/brain_pgene/')
+p1 <- plot_region_DESeqRes(pgene_region_res, intersect(pgene_filtered_by_parent, pgene_combined_transcribed), pgene_fpkm_brainspan, 0.5, 'Pseudogene')
+p2 <- plot_region_DESeqRes(pgene_region_res_nofilter, pgene_combined_transcribed, pgene_fpkm_brainspan, 0.5, 'Pseudogene_nofilter')
+p3 <- plot_region_DESeqRes(pc_region_res, intersect(pc_filtered_by_parent, pc_combined_transcribed), pc_fpkm_brainspan, 2, 'Parent_gene')
+p4 <- plot_region_DESeqRes(pc_region_res, pc_combined_transcribed, pc_fpkm_brainspan, 2, 'Protein-coding_gene')
+p5 <- p1 / p2 / p3 / p4+ plot_layout(guides = "collect") & theme(legend.position = 'right')
+ggsave('brain_vs._non-brain/region_specificity/region_specificity_DEG_pie.pdf', p5, height = 10, width = 5)
+```
+
+## GINI
+```{r}
+regionSpecGini <- function(Mat, bg, thres){
+  temp <- Mat[rownames(Mat) %in% bg, ]
+  index <- apply(temp, 1, function(x) sum(x >= thres) / ncol(temp) >= 0.8)
+  detected <- temp[index,]
+  res <- apply(detected, 1, ineq)
+  return(res)
+}
+```
+
+### Results
+```{r}
+pgene_gini <- regionSpecGini(pgene_fpkm_brainspan, intersect(pgene_filtered_by_parent, pgene_combined_transcribed), 0.5)
+pc_gini <- regionSpecGini(pc_fpkm_brainspan, pc_combined_transcribed, 2)
+parent_gini <-  regionSpecGini(pc_fpkm_brainspan, intersect(pc_filtered_by_parent, pc_combined_transcribed), 2)
+```
+
+### Visualization
+```{r}
+data <- data.frame(gini = c(pgene_gini, parent_gini, pc_gini), group = c(rep('Pseudogene', length(pgene_gini)), rep('Parent Gene', length(parent_gini)), rep('Protein-coding Gene', length(pc_gini))))
+p <- ggplot(data, aes(x = gini, fill = group, color = group)) + geom_density(alpha = 0.8) + scale_fill_brewer(palette = 'Reds') + scale_color_brewer(palette = 'Reds') + labs(x = 'Gini Coefficient', y = 'Density', title = 'Expression Inequality') +
+  xlim(c(0,1)) + theme_bw(base_size = 14) + theme(legend.title = element_blank())
+ggsave('brain_vs._non-brain/region_specificity/region_expression_inequality.pdf', p, width = 6, height = 5)
+```

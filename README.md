@@ -18,7 +18,7 @@ In this study, we aim to explore whether pseudogenes could possess putative biol
 
 The publicly available RNA-seq reads used in this study were downloaded as BAM files from [Synapse](https://www.synapse.org/). 
 
-The expression data of the pseudogenes and protein-coding genes in human and macaque quantified based on the computational framework in this study were deposited to [Zenodo](10.5281/zenodo.16810204).
+The expression data of the pseudogenes and protein-coding genes in human and macaque quantified based on the computational framework in this study were deposited to [Zenodo]([10.5281/zenodo.16810204](https://doi.org/10.5281/zenodo.16810204)).
 
 
 ## For more information

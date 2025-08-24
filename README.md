@@ -1,4 +1,4 @@
-# Comprehensive analysis of pseudogene expression in human and macaque brains
+# Comprehensive analysis of pseudogene expression in human and macaque brains compared to other tissues
 
 ## Overview
 Pseudogenes are DNA sequences similar to protein-coding genes that contain disabling mutations rendering them unable to produce fully functional proteins. Traditionally, pseudogenes have been considered non-functional genomic elements that evolve under neutral selection, permitting the accumulation of deleterious mutations such as in-frame stop codons and frameshift insertions or deletions. 
